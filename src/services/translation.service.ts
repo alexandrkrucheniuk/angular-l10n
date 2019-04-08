@@ -9,6 +9,7 @@ import { InjectorRef } from '../models/injector-ref';
 import { L10N_CONFIG, L10nConfigRef } from "../models/l10n-config";
 import { mergeDeep } from '../models/merge-deep';
 import { ProviderType } from '../models/types';
+import {logger} from "codelyzer/util/logger";
 
 export interface ITranslationService {
 
@@ -166,24 +167,64 @@ export interface ITranslationService {
     }
 
     private getValue(key: string, args: any, lang: string): string | any {
-        const path: string = key;
-        let value: string | null = null;
-        let translation: any = this.translationData[lang];
-        if (translation) {
-            // Composed key.
-            if (this.configuration.translation.composedKeySeparator) {
+        const translationsData: any = this.translationData[lang];
+        const translation: object | any = this.getTranslationByKey(key, translationsData);
+        return this.translationHandler.parseValue(key, translation.key, translation.value, args, lang);
+    }
+
+    private getTranslationByKey(key: string, translationData: any): object {
+        const searchReferences: boolean = key.includes('@:');
+
+        let value: string;
+
+        if (!translationData) {
+            return this.getMissingTranslationMessage();
+        } else if (this.configuration.translation.composedKeySeparator) {
+            if (searchReferences) {
+                value = key.split(' ').map((keyPath: string) => {
+                    if (keyPath.includes('@:')) {
+                        return this.getTranslationByKey(keyPath, translationData);
+                    } else {
+                        return this.translateKeyArray(key.split(this.configuration.translation.composedKeySeparator),
+                            translationData);
+                    }
+                });
+
+            } else {
                 const sequences: string[] = key.split(this.configuration.translation.composedKeySeparator);
-                key = sequences.shift()!;
-                while (sequences.length > 0 && translation[key]) {
-                    translation = translation[key];
-                    key = sequences.shift()!;
-                }
+                value = this.translateKeyArray(sequences, translationData);
             }
-            value = typeof translation[key] === "undefined" ?
-                translation[this.configuration.translation.missingKey || ""] :
-                translation[key];
+        } else {
+            value = this.translateBySingleKey(key, translationData);
         }
-        return this.translationHandler.parseValue(path, key, value, args, lang);
+
+        return {
+            key,
+            value
+        };
+    }
+
+    private translateKeyArray(sequences: string[], translations: object | any): object | string | any {
+        try {
+            return sequences.reduce((acc: object, sequence: string) => {
+                if (acc[sequence]) {
+                    return acc[sequence];
+                }
+                throw  new Error('translations missed');
+            }, translations);
+        } catch (e) {
+            return this.getMissingTranslationMessage();
+        }
+    }
+
+    private translateBySingleKey(key: string, translations: Object | any): string {
+        return translations[key]
+            ? translations[key]
+            : this.getMissingTranslationMessage();
+    }
+
+    private getMissingTranslationMessage(): string {
+        return this.configuration.translation.missingKey || "";
     }
 
     private translateI18nPlural(key: string, args: any, lang: string): string {
